@@ -14,6 +14,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 from .models import VehicleQuote
 from .exceptions import PorterAPIError
 
+sleep_time = 1
+time.sleep(sleep_time)  # Initial sleep to allow imports to settle and network to stabilize
 def _validate_phone(phone: str) -> str:
     if not re.fullmatch(r"\d{10}", phone):
         raise PorterAPIError("Phone number must be exactly 10 digits.")
@@ -47,6 +49,117 @@ class PorterAPI:
 
     def get_supported_service_types(self) -> List[str]:
         return self.SERVICE_TYPES
+
+    def select_requirement_type(self, driver, wait, requirement_type: str = "personal") -> bool:
+        """
+        Select the requirement type (Personal User or Business User).
+        """
+        try:
+            print(f"Selecting requirement type: {requirement_type}")
+            
+            # Wait for requirement section to load
+            time.sleep(2)
+            
+            # Try multiple selectors for the requirement radio buttons
+            selectors_to_try = [
+                f'input[value="{requirement_type}"]',
+                f'label:contains("Personal User") input',
+                f'label:contains("Business User") input',
+                '.FareEstimateRequirement_requirement-input__4YZ93',
+                '[class*="requirement-input"]',
+                'input[name="requirement"]'
+            ]
+            
+            for selector in selectors_to_try:
+                try:
+                    print(f"Trying selector: {selector}")
+                    
+                    # For CSS selectors
+                    if selector.startswith('input[value='):
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    elif selector.startswith('label:contains'):
+                        # This won't work with Selenium, skip
+                        continue
+                    else:
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    
+                    if elements:
+                        print(f"Found {len(elements)} elements with selector: {selector}")
+                        
+                        # For requirement type, we want the first one (usually Personal User)
+                        target_element = elements[0]
+                        
+                        # Check if it's already selected
+                        if target_element.is_selected():
+                            print("Requirement already selected")
+                            return True
+                        
+                        # Try different click methods
+                        try:
+                            # Method 1: Click the input directly
+                            target_element.click()
+                            print("Successfully clicked requirement radio button")
+                            time.sleep(1)
+                            return True
+                            
+                        except ElementClickInterceptedException:
+                            print("Direct click intercepted, trying parent label...")
+                            
+                            # Method 2: Click the parent label
+                            parent_label = target_element.find_element(By.XPATH, "./..")
+                            parent_label.click()
+                            print("Successfully clicked parent label")
+                            time.sleep(1)
+                            return True
+                            
+                except Exception as e:
+                    print(f"Error with selector '{selector}': {e}")
+                    continue
+            
+            # Alternative approach: Find by text content
+            try:
+                print("Trying to find by text content...")
+                labels = driver.find_elements(By.TAG_NAME, "label")
+                for label in labels:
+                    if "Personal User" in label.text:
+                        print("Found Personal User label")
+                        label.click()
+                        print("Successfully clicked Personal User label")
+                        time.sleep(1)
+                        return True
+                        
+            except Exception as e:
+                print(f"Error finding by text content: {e}")
+            
+            # Final attempt: Use JavaScript to select the radio button
+            try:
+                print("Trying JavaScript approach...")
+                js_script = """
+                const radioButtons = document.querySelectorAll('input[name="requirement"]');
+                for (let radio of radioButtons) {
+                    if (radio.value === 'personal') {
+                        radio.checked = true;
+                        radio.dispatchEvent(new Event('change'));
+                        return true;
+                    }
+                }
+                return false;
+                """
+                result = driver.execute_script(js_script)
+                if result:
+                    print("Successfully selected requirement using JavaScript")
+                    time.sleep(1)
+                    return True
+                    
+            except Exception as e:
+                print(f"Error with JavaScript approach: {e}")
+            
+            print("Could not select requirement type")
+            return False
+            
+        except Exception as e:
+            print(f"Error in select_requirement_type: {e}")
+            return False
 
     def select_address_from_autocomplete(self, driver, wait, input_element, address: str) -> bool:
         """
@@ -263,6 +376,11 @@ class PorterAPI:
                     "error": f"Could not select service type: {service_type}",
                     "details": "Service selection failed"
                 }
+            
+            # NEW: Select requirement type (Personal User)
+            print("Selecting requirement type...")
+            if not self.select_requirement_type(driver, wait, "personal"):
+                print("Warning: Could not select requirement type, continuing...")
             
             # Fill pickup address with autocomplete selection
             print("Filling pickup address...")
