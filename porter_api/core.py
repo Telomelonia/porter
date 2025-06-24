@@ -1,4 +1,5 @@
 import re
+import time
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from selenium import webdriver
@@ -6,7 +7,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementClickInterceptedException
 from webdriver_manager.chrome import ChromeDriverManager
 
 from .models import VehicleQuote
@@ -46,6 +47,103 @@ class PorterAPI:
     def get_supported_service_types(self) -> List[str]:
         return self.SERVICE_TYPES
 
+    def select_service_type(self, driver, wait, service_type: str) -> bool:
+        """
+        Select the service type on the Porter.in estimate form with debugging and robust error handling.
+        """
+        try:
+            print("Looking for category selector...")
+            
+            # Wait for page to fully load
+            time.sleep(3)
+            
+            # Service mapping
+            service_mapping = {
+                "two_wheelers": "Two Wheelers",
+                "trucks": "Trucks", 
+                "packers_and_movers": "Packers & Movers"
+            }
+            
+            target_text = service_mapping.get(service_type, "Trucks")
+            print(f"Looking for service: {target_text}")
+            
+            # Try to find category selector containers
+            selectors_to_try = [
+                "CategorySelector_category-select-container__LgXjx",
+                "[class*='CategorySelector'][class*='container']",
+                "[class*='category-select-container']",
+                "[class*='category'][class*='container']"
+            ]
+            
+            service_containers = []
+            for selector in selectors_to_try:
+                try:
+                    if selector.startswith("["):
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    else:
+                        elements = driver.find_elements(By.CLASS_NAME, selector)
+                    print(f"Selector '{selector}': Found {len(elements)} elements")
+                    if elements:
+                        service_containers = elements
+                        break
+                except Exception as e:
+                    print(f"Error with selector '{selector}': {e}")
+            
+            if not service_containers:
+                print("No service containers found! Dumping page source...")
+                print("Current URL:", driver.current_url)
+                with open("porter_debug.html", "w", encoding="utf-8") as f:
+                    f.write(driver.page_source)
+                print("Page source saved to porter_debug.html")
+                return False
+            
+            print(f"Found {len(service_containers)} service containers")
+            
+            # Look for the container with our target text
+            for i, container in enumerate(service_containers):
+                try:
+                    # Get all text in this container
+                    container_text = container.text
+                    print(f"Container {i}: {container_text}")
+                    
+                    if target_text.lower() in container_text.lower():
+                        print(f"Found target service in container {i}: {container_text}")
+                        
+                        # Try multiple click approaches
+                        try:
+                            # Method 1: Direct click on container
+                            container.click()
+                            print("Successfully clicked using direct click")
+                            time.sleep(2)
+                            return True
+                            
+                        except ElementClickInterceptedException:
+                            print("Direct click intercepted, trying JavaScript click...")
+                            
+                            # Method 2: JavaScript click
+                            driver.execute_script("arguments[0].click();", container)
+                            print("Successfully clicked using JavaScript")
+                            time.sleep(2)
+                            return True
+                            
+                except Exception as e:
+                    print(f"Error checking container {i}: {e}")
+                    continue
+                    
+            print(f"Could not find service type: {target_text}")
+            print("Available options were:")
+            for i, container in enumerate(service_containers):
+                try:
+                    print(f"  {i}: {container.text}")
+                except:
+                    print(f"  {i}: Could not get text")
+            
+            return False
+            
+        except Exception as e:
+            print(f"Error in select_service_type: {e}")
+            return False
+
     def get_quote(self, pickup_address: str, drop_address: str, city: str, service_type: str = "trucks") -> Dict:
         if city not in self.SUPPORTED_CITIES:
             raise PorterAPIError(f"City '{city}' is not supported.")
@@ -67,6 +165,7 @@ class PorterAPI:
         wait = WebDriverWait(driver, 15)
         try:
             driver.get("https://porter.in/")
+            
             # Select city
             wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "CitySelector_city-selected-text__1dNz4"))).click()
             city_elements = driver.find_elements(By.CSS_SELECTOR, '[class^="CitySelectorModal_city-title"]')
@@ -78,12 +177,18 @@ class PorterAPI:
                     break
             if not found:
                 raise PorterAPIError(f"City '{city}' not found on Porter.in.")
+                
             # Open estimate form
             wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "EstimateCard_estimate-card__NgFIr"))).click()
-            # Select service type
-            radio_buttons = driver.find_elements(By.CLASS_NAME, "FareEstimateRequirement_requirement-radio-button__oBz_y")
-            idx = self.SERVICE_TYPES.index(service_type)
-            radio_buttons[idx].click()
+            
+            # NEW: Select service type using the updated method
+            if not self.select_service_type(driver, wait, service_type):
+                return {
+                    "success": False,
+                    "error": f"Could not select service type: {service_type}",
+                    "details": "Service selection failed"
+                }
+            
             # Fill form fields
             pickup_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input[placeholder="Enter pickup address"]')))
             pickup_input.clear()
@@ -97,9 +202,11 @@ class PorterAPI:
             name_input = driver.find_element(By.CSS_SELECTOR, '.FareEstimateForms_name-input__n8xyD')
             name_input.clear()
             name_input.send_keys(self.name)
+            
             # Submit form
             submit_btn = driver.find_element(By.CSS_SELECTOR, '.FormInput_submit__ea0jJ.FormInput_submit-enabled__DbSnE.FareEstimateForms_submit-container___lB5u')
             submit_btn.click()
+            
             # Wait for results
             wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'FareEstimateResultVehicleCard_container__BdMav')))
             result_cards = driver.find_elements(By.CLASS_NAME, 'FareEstimateResultVehicleCard_container__BdMav')
