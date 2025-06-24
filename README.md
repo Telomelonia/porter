@@ -136,7 +136,7 @@ When things go sideways (it happens to the best of us):
 - Hyderabad (Biryani and deliveries)
 - Pune (IT hub express)
 
-_Want more cities? Poke Porter.in, not me! 😄_
+_Want more cities? fork the repo and please help this poor guy's repo 🙏_
 
 ---
 
@@ -166,6 +166,7 @@ This package includes robust error handling because, let's face it, automation i
 
 **📱 "Invalid phone number!"**
 
+- It could be possible there backend engineer lock in
 - Phone numbers should be exactly 10 digits
 - No country codes, no spaces, no dashes - just pure digits
 
@@ -203,13 +204,13 @@ Found a bug? Want to add a feature? Think my code could be better? (It probably 
 
 ## 🎬 Final Notes
 
-This project was built with ❤️, ☕, and probably too much Stack Overflow. It's my small contribution to the "let's automate boring stuff" movement.
+This project was built with ❤️, ☕, and probably too much GenAI. It's my small contribution to the "let's automate boring stuff" movement.
 
-Remember: Use this responsibly, respect Porter.in's services, and may your deliveries always be on time! 🚚✨
+Remember: Use this responsibly, respect Porter.in's services! Enjoy...✨
 
 ---
 
-_P.S. If this package saves you time, consider starring the repo ⭐ - it makes my day and costs you nothing!_
+_P.S. If this package saves you time, consider starring the repo ⭐ - it motivates me and costs you nothing!_
 
 **Happy coding! 🎉**
 
