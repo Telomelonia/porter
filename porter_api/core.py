@@ -4,6 +4,7 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -46,6 +47,79 @@ class PorterAPI:
 
     def get_supported_service_types(self) -> List[str]:
         return self.SERVICE_TYPES
+
+    def select_address_from_autocomplete(self, driver, wait, input_element, address: str) -> bool:
+        """
+        Fill address input and select the first option from autocomplete dropdown.
+        """
+        try:
+            print(f"Entering address: {address}")
+            
+            # Clear and type the address
+            input_element.clear()
+            input_element.send_keys(address)
+            
+            # Wait a bit for autocomplete to appear
+            time.sleep(2)
+            
+            # Try multiple selectors for autocomplete options
+            autocomplete_selectors = [
+                "[class*='autocomplete'] li",
+                "[class*='suggestion'] li", 
+                "[class*='dropdown'] li",
+                "[class*='option']",
+                "ul li",
+                ".pac-item",  # Google Places autocomplete
+                "[role='option']"
+            ]
+            
+            for selector in autocomplete_selectors:
+                try:
+                    print(f"Trying selector: {selector}")
+                    autocomplete_options = driver.find_elements(By.CSS_SELECTOR, selector)
+                    
+                    if autocomplete_options:
+                        print(f"Found {len(autocomplete_options)} autocomplete options")
+                        
+                        # Print first few options for debugging
+                        for i, option in enumerate(autocomplete_options[:3]):
+                            try:
+                                print(f"Option {i}: {option.text}")
+                            except:
+                                print(f"Option {i}: Could not get text")
+                        
+                        # Click the first option
+                        first_option = autocomplete_options[0]
+                        
+                        # Try different click methods
+                        try:
+                            first_option.click()
+                            print("Successfully clicked first autocomplete option")
+                            time.sleep(1)
+                            return True
+                        except ElementClickInterceptedException:
+                            print("Direct click intercepted, trying JavaScript...")
+                            driver.execute_script("arguments[0].click();", first_option)
+                            print("Successfully clicked using JavaScript")
+                            time.sleep(1)
+                            return True
+                            
+                except Exception as e:
+                    print(f"Error with selector '{selector}': {e}")
+                    continue
+            
+            # If no autocomplete found, try pressing Arrow Down + Enter
+            print("No autocomplete options found, trying keyboard navigation...")
+            input_element.send_keys(Keys.ARROW_DOWN)
+            time.sleep(0.5)
+            input_element.send_keys(Keys.ENTER)
+            time.sleep(1)
+            print("Used keyboard navigation")
+            return True
+            
+        except Exception as e:
+            print(f"Error in select_address_from_autocomplete: {e}")
+            return False
 
     def select_service_type(self, driver, wait, service_type: str) -> bool:
         """
@@ -163,6 +237,7 @@ class PorterAPI:
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         wait = WebDriverWait(driver, 15)
+        
         try:
             driver.get("https://porter.in/")
             
@@ -181,7 +256,7 @@ class PorterAPI:
             # Open estimate form
             wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "EstimateCard_estimate-card__NgFIr"))).click()
             
-            # NEW: Select service type using the updated method
+            # Select service type
             if not self.select_service_type(driver, wait, service_type):
                 return {
                     "success": False,
@@ -189,27 +264,38 @@ class PorterAPI:
                     "details": "Service selection failed"
                 }
             
-            # Fill form fields
+            # Fill pickup address with autocomplete selection
+            print("Filling pickup address...")
             pickup_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input[placeholder="Enter pickup address"]')))
-            pickup_input.clear()
-            pickup_input.send_keys(pickup_address)
+            if not self.select_address_from_autocomplete(driver, wait, pickup_input, pickup_address):
+                print("Warning: Could not select pickup address from autocomplete")
+            
+            # Fill drop address with autocomplete selection
+            print("Filling drop address...")
             drop_input = driver.find_element(By.CSS_SELECTOR, 'input[placeholder="Enter drop address"]')
-            drop_input.clear()
-            drop_input.send_keys(drop_address)
-            mobile_input = driver.find_element(By.CSS_SELECTOR, '.FareEstimateForms_mobile-input__jy5wR')
+            if not self.select_address_from_autocomplete(driver, wait, drop_input, drop_address):
+                print("Warning: Could not select drop address from autocomplete")
+            
+            # Fill other form fields
+            print("Filling phone and name...")
+            mobile_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.FareEstimateForms_mobile-input__jy5wR')))
             mobile_input.clear()
             mobile_input.send_keys(self.phone)
+            
             name_input = driver.find_element(By.CSS_SELECTOR, '.FareEstimateForms_name-input__n8xyD')
             name_input.clear()
             name_input.send_keys(self.name)
             
             # Submit form
-            submit_btn = driver.find_element(By.CSS_SELECTOR, '.FormInput_submit__ea0jJ.FormInput_submit-enabled__DbSnE.FareEstimateForms_submit-container___lB5u')
+            print("Submitting form...")
+            submit_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '.FormInput_submit__ea0jJ.FormInput_submit-enabled__DbSnE.FareEstimateForms_submit-container___lB5u')))
             submit_btn.click()
             
             # Wait for results
+            print("Waiting for results...")
             wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'FareEstimateResultVehicleCard_container__BdMav')))
             result_cards = driver.find_elements(By.CLASS_NAME, 'FareEstimateResultVehicleCard_container__BdMav')
+            
             quotes = []
             for card in result_cards:
                 try:
@@ -226,8 +312,10 @@ class PorterAPI:
                         "capacity": capacity,
                         "capacity_kg": capacity_kg
                     })
-                except Exception:
+                except Exception as e:
+                    print(f"Error parsing quote card: {e}")
                     continue
+                    
             return {
                 "success": True,
                 "pickup_address": pickup_address,
@@ -239,6 +327,7 @@ class PorterAPI:
                 "quotes": quotes,
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
+            
         except (TimeoutException, NoSuchElementException) as e:
             return {
                 "success": False,
